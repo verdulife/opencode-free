@@ -1,0 +1,24 @@
+{
+  "name": "opencode-zen",
+  "version": "1.0.0",
+  "description": "OpenCode Zen free models as a Pi provider — no login, no opencode CLI needed",
+  "keywords": [
+    "pi-package",
+    "opencode",
+    "free-models",
+    "zen",
+    "pi",
+    "custom-provider",
+    "openai-compatible"
+  ],
+  "license": "MIT",
+  "author": "",
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
