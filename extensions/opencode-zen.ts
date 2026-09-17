@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 /**
@@ -14,6 +13,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
  * usage behaves like the opencode CLI. This extension replicates the CLI
  * headers (see anomalyco/opencode session/llm/request.ts).
  *
+ * Since ~Sep 2026 the gateway ALSO validates x-opencode-session /
+ * x-opencode-request against opencode's EID format and rejects anything else
+ * with HTTP 403 FreeTierError "OpenCode's free tier can only be used from
+ * within OpenCode" (see createEid below, mirrored from
+ * packages/schema/src/identifier.ts and packages/core/src/id/id.ts).
+ *
  * Model list: only cost 0/0 and NOT deprecated. Refresh on demand with
  * `/opencode-pi refresh` (checks the catalog + latest CLI version from npm).
  * The validated list is cached in ~/.cache/opencode-pi/ and reused at load.
@@ -25,9 +30,32 @@ const NPM_LATEST_URL = "https://registry.npmjs.org/opencode-ai/latest";
 const CACHE_DIR = `${process.env.HOME}/.cache/opencode-pi`;
 const MODELS_FILE = `${CACHE_DIR}/models.json`;
 const VERSION_FILE = `${CACHE_DIR}/cli-version`;
-const USER_ID_FILE = `${CACHE_DIR}/user-id`;
 
 const DEFAULT_CLI_VERSION = "1.18.25";
+
+// opencode EID format, mirrored from packages/schema/src/identifier.ts:
+// `<prefix>_<12 hex chars> + <14 random chars from a 62-char alphabet>`.
+// The first 12 chars encode `Date.now() << 12 | counter`, the last 14 are
+// random. The zen gateway rejects ids that do not match this structure with
+// 403 FreeTierError, so we cannot send plain UUIDs anymore.
+const EID_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+let lastEidTimestamp = 0;
+let eidCounter = 0;
+
+function createEid(prefix: "ses" | "msg"): string {
+  const ts = Date.now();
+  if (ts !== lastEidTimestamp) {
+    lastEidTimestamp = ts;
+    eidCounter = 0;
+  }
+  const current = BigInt(ts) * 0x1000n + BigInt(eidCounter);
+  eidCounter++;
+  const time = current.toString(16).padStart(12, "0").slice(0, 12);
+  const bytes = crypto.getRandomValues(new Uint8Array(14));
+  let rand = "";
+  for (const byte of bytes) rand += EID_CHARS[byte % 62];
+  return `${prefix}_${time}${rand}`;
+}
 
 interface ModelSeed {
   id: string;
@@ -107,14 +135,6 @@ function writeCache(file: string, content: string): void {
   }
 }
 
-function loadUserId(): string {
-  const existing = readCache(USER_ID_FILE)?.trim();
-  if (existing) return existing;
-  const id = randomUUID();
-  writeCache(USER_ID_FILE, id);
-  return id;
-}
-
 function loadCliVersion(): string {
   return readCache(VERSION_FILE)?.trim() || DEFAULT_CLI_VERSION;
 }
@@ -138,10 +158,10 @@ function persistCliVersion(version: string): void {
   writeCache(VERSION_FILE, version);
 }
 
-const USER_ID = loadUserId();
 let cliVersion = loadCliVersion();
 let models = loadModels();
-let sessionId = randomUUID();
+let sessionId = createEid("ses");
+let requestId = createEid("msg");
 let projectHeader = "pi-agent";
 
 function providerModels(list: ModelSeed[]) {
@@ -166,7 +186,7 @@ function register(pi: ExtensionAPI): void {
       "user-agent": `opencode/${cliVersion}`,
       "x-opencode-client": "cli",
       "x-opencode-session": sessionId,
-      "x-opencode-request": USER_ID,
+      "x-opencode-request": requestId,
       "x-opencode-project": projectHeader,
     },
     models: providerModels(models),
@@ -251,10 +271,11 @@ function modelsListing(): string {
 export default function (pi: ExtensionAPI) {
   register(pi);
 
-  // New session -> rotate session id (like the CLI per conversation) and
-  // reset the project header until the session name is known.
+  // New session -> rotate session/request ids (like the CLI per conversation)
+  // and reset the project header until the session name is known.
   pi.on("session_start", () => {
-    sessionId = randomUUID();
+    sessionId = createEid("ses");
+    requestId = createEid("msg");
     projectHeader = "pi-agent";
     register(pi);
   });
