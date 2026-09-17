@@ -1,4 +1,4 @@
-# opencode-zen
+# opencode-free
 
 [Pi](https://pi.dev) provider for [OpenCode Zen](https://opencode.ai/docs/zen) free models — no API key, no login, no local opencode CLI needed.
 
@@ -25,13 +25,13 @@ Use them as `opencode/big-pickle`, `opencode/nemotron-3-ultra-free`, etc.
 
 ```bash
 # From git (recommended):
-pi install git:github.com/YOUR_USERNAME/opencode-zen
+pi install git:github.com/YOUR_USERNAME/opencode-free
 
 # From npm (if published):
-pi install npm:opencode-zen
+pi install npm:opencode-free
 
 # Local / development:
-pi install ./path/to/opencode-zen
+pi install ./path/to/opencode-free
 ```
 
 Then `/reload` in Pi (or restart).
