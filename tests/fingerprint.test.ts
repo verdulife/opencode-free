@@ -5,8 +5,9 @@ import {
 	EID_PATTERN,
 	applyFingerprintGuard,
 	createEid,
+	sanitizeHeaderValue,
 	toModelSeeds,
-} from "../extensions/opencode-zen.ts";
+} from "../extensions/opencode-free.ts";
 
 const CLI_VERSION = "1.18.25";
 const SESSION = "ses_1a11acf6af90tPeK65IrK5rwqs";
@@ -118,6 +119,42 @@ test("guard is idempotent for the session it already installed", () => {
 	applyFingerprintGuard(headers, deps());
 	assert.equal(headers["x-opencode-session"], session);
 	assert.notEqual(headers["x-opencode-request"], request);
+});
+
+// --- header value sanitisation ------------------------------------------------
+
+test("sanitizeHeaderValue keeps printable ASCII untouched", () => {
+	assert.equal(sanitizeHeaderValue("pi-agent"), "pi-agent");
+	assert.equal(sanitizeHeaderValue("my session 42"), "my session 42");
+	assert.equal(sanitizeHeaderValue("  padded  "), "padded");
+});
+
+test("sanitizeHeaderValue makes any name a valid header value", () => {
+	for (const raw of ["mi sesión 🚀", "café", "日本語 name", "tab\tname", "line\nbreak", "\uD83D"]) {
+		const value = sanitizeHeaderValue(raw);
+		assert.match(value, /^[\x20-\x7E]*$/, `raw: ${JSON.stringify(raw)}`);
+		assert.doesNotThrow(
+			() =>
+				new Request("https://opencode.ai/zen/v1/chat/completions", {
+					headers: { "x-opencode-project": value },
+				}),
+			`raw: ${JSON.stringify(raw)}`,
+		);
+	}
+});
+
+test("sanitizeHeaderValue caps the encoded value", () => {
+	assert.ok(sanitizeHeaderValue("x".repeat(1000)).length <= 200);
+	assert.ok(sanitizeHeaderValue("🚀".repeat(200)).length <= 200);
+});
+
+test("guard writes an ASCII-safe project header for an emoji session name", () => {
+	const headers: Record<string, string> = { "x-opencode-client": "pi", "x-opencode-session": "uuid" };
+	assert.equal(applyFingerprintGuard(headers, deps(SESSION, "mi sesión 🚀")), true);
+	for (const value of Object.values(headers)) assert.match(value, /^[\x20-\x7E]*$/);
+	assert.doesNotThrow(
+		() => new Request("https://opencode.ai/zen/v1/chat/completions", { headers }),
+	);
 });
 
 // --- catalog mapping ---------------------------------------------------------

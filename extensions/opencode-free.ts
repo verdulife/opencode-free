@@ -77,6 +77,26 @@ export function createEid(prefix: "ses" | "msg"): string {
 	return `${prefix}_${time}${rand}`;
 }
 
+// Header values must be Latin-1 printable; Pi only strips CR/LF and trims a
+// session name (core/session-manager.js), so an emoji or an accent would reach
+// fetch as-is and Node refuses it with
+// "TypeError: Cannot convert argument to a ByteString". Encode anything outside
+// printable ASCII, and cap the result so a pathological name cannot blow the
+// header size.
+const HEADER_VALUE_MAX = 200;
+
+export function sanitizeHeaderValue(value: string): string {
+	const encoded = value.replace(/[^\x20-\x7E]/gu, (char) => {
+		try {
+			return encodeURIComponent(char);
+		} catch {
+			// Unpaired surrogate: keep the header valid instead of throwing.
+			return "?";
+		}
+	});
+	return encoded.trim().slice(0, HEADER_VALUE_MAX);
+}
+
 export interface ModelSeed {
 	id: string;
 	name: string;
@@ -278,7 +298,7 @@ export function applyFingerprintGuard(headers: HeaderBag, deps: FingerprintDeps)
 	headers["x-opencode-session"] =
 		typeof deps.sessionId === "string" && EID_PATTERN.test(deps.sessionId) ? deps.sessionId : createEid("ses");
 	headers["x-opencode-request"] = createEid("msg");
-	headers["x-opencode-project"] = deps.projectHeader;
+	headers["x-opencode-project"] = sanitizeHeaderValue(deps.projectHeader);
 	return true;
 }
 
@@ -323,7 +343,7 @@ function register(pi: ExtensionAPI): void {
 			"x-opencode-client": "cli",
 			"x-opencode-session": sessionId,
 			"x-opencode-request": createEid("msg"),
-			"x-opencode-project": projectHeader,
+			"x-opencode-project": sanitizeHeaderValue(projectHeader),
 		},
 		models: providerModels(models),
 		refreshModels: (context) => refreshProviderModels(context),
@@ -449,7 +469,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Session name (or id when unnamed) becomes the x-opencode-project header.
 	pi.on("session_info_changed", (event) => {
-		projectHeader = event.name ?? sessionId;
+		projectHeader = sanitizeHeaderValue(event.name ?? sessionId);
 		register(pi);
 	});
 
