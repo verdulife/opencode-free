@@ -1,3 +1,10 @@
 node_modules/
 .DS_Store
 *.tgz
+
+# ODD working documents: agent artifacts, not part of the published package.
+odd/
+
+# This package has no runtime dependencies; a lockfile only ever captured the
+# stale peer tree that produced vulnerability warnings on install.
+package-lock.json
