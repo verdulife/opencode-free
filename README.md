@@ -64,6 +64,35 @@ Three layers, no user action required:
 The catalog is cached in `~/.cache/opencode-pi/models.json` and read at load, so an
 offline start still has the last known list. A failed fetch never empties the list.
 
+## Known limitations
+
+**Auto-compaction cannot run on a free model.** Pi's compaction and branch-summary calls are
+rejected by the free tier with `403 FreeTierError`, and the session then shows:
+
+```
+Auto-compaction failed: Summarization failed: 403: {"type":"FreeTierError",
+"message":"Error from provider (Console): OpenCode's free tier can only be used from within OpenCode"}
+```
+
+This is not the request fingerprint: the failing request carries the full CLI fingerprint
+(`x-opencode-client: cli`, fresh `ses_…`/`msg_…` EIDs, `opencode/<version>` user agent). Pi
+builds the summarization call differently from a normal turn — it sets `max_tokens`, routes a
+fresh `uuidv7()` as the session id and passes `cacheRetention: "none"` — and one of those makes
+the gateway reject it. It reproduces with a conversation of a couple of short turns, so it is not
+about size.
+
+Consequences and workarounds:
+
+- The turn itself keeps working; only the summarization fails, so a long session on a free model
+  grows until it can no longer compact.
+- Switch to a non-free model (for example an `opencode-go/*` entry) before compacting: compaction
+  runs on the session's current model and Pi cannot route it elsewhere.
+- Or disable it with `compaction.enabled: false` and use `/compact` manually while on such a
+  model. Note that an overflowing context still triggers overflow compaction, which fails the
+  same way.
+- `compaction.modelOverrides.<model-id>.reserveTokens` / `.keepRecentTokens` only tune when
+  compaction happens, not which model runs it.
+
 ## How it works
 
 The Zen free tier only answers requests that look like they come from the official
@@ -83,7 +112,8 @@ request. So the extension also enforces the fingerprint per request in
 `before_provider_headers`: when an outgoing request carries Pi's own identity, or a
 session id that is not an EID, it is rewritten into the CLI fingerprint. Requests to any
 other provider are never touched, and `x-opencode-request` is minted per request the way
-the CLI does.
+the CLI does. Session names are percent-encoded down to printable ASCII before they reach a
+header, because not every header value survives the trip.
 
 Reference: [anomalyco/opencode `session/llm/request.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/llm/request.ts).
 
