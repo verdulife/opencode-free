@@ -64,34 +64,21 @@ Three layers, no user action required:
 The catalog is cached in `~/.cache/opencode-pi/models.json` and read at load, so an
 offline start still has the last known list. A failed fetch never empties the list.
 
-## Known limitations
+## Compaction on the free tier
 
-**Auto-compaction cannot run on a free model.** Pi's compaction and branch-summary calls are
-rejected by the free tier with `403 FreeTierError`, and the session then shows:
+Pi's own compaction and branch-summary requests are rejected by the free tier with
+`403 FreeTierError`, so the extension produces those summaries itself and hands them back to
+Pi through `session_before_compact` and `session_before_tree`. That covers automatic
+compaction (context threshold and overflow), manual `/compact`, and branch summaries.
 
-```
-Auto-compaction failed: Summarization failed: 403: {"type":"FreeTierError",
-"message":"Error from provider (Console): OpenCode's free tier can only be used from within OpenCode"}
-```
+If the extension's summarization fails — the gateway changes, the request times out, the
+network drops, or the user aborts — the extension notifies and yields. Pi then runs its own
+attempt and fails the way it used to, so a failure never leaves the session worse off than
+before.
 
-This is not the request fingerprint: the failing request carries the full CLI fingerprint
-(`x-opencode-client: cli`, fresh `ses_…`/`msg_…` EIDs, `opencode/<version>` user agent). Pi
-builds the summarization call differently from a normal turn — it sets `max_tokens`, routes a
-fresh `uuidv7()` as the session id and passes `cacheRetention: "none"` — and one of those makes
-the gateway reject it. It reproduces with a conversation of a couple of short turns, so it is not
-about size.
-
-Consequences and workarounds:
-
-- The turn itself keeps working; only the summarization fails, so a long session on a free model
-  grows until it can no longer compact.
-- Switch to a non-free model (for example an `opencode-go/*` entry) before compacting: compaction
-  runs on the session's current model and Pi cannot route it elsewhere.
-- Or disable it with `compaction.enabled: false` and use `/compact` manually while on such a
-  model. Note that an overflowing context still triggers overflow compaction, which fails the
-  same way.
-- `compaction.modelOverrides.<model-id>.reserveTokens` / `.keepRecentTokens` only tune when
-  compaction happens, not which model runs it.
+Because that gate is an undocumented check rather than a published contract, treat it as
+something that can change without notice. The tests pin the shape the extension relies on;
+when `node --test` fails there, the request shape needs revisiting.
 
 ## How it works
 
@@ -115,6 +102,23 @@ other provider are never touched, and `x-opencode-request` is minted per request
 the CLI does. Session names are percent-encoded down to printable ASCII before they reach a
 header, because not every header value survives the trip.
 
+### Request shape
+
+The gateway also inspects the body. Measured against the live gateway, a request is accepted
+only when the body carries `stream: true` **and** a `tools` array containing tools named
+exactly `read` and `bash` — the names are case-sensitive and nothing else about those entries
+is read (descriptions and parameter schemas are ignored).
+
+Pi's normal turns satisfy this, which is why they always worked; its summarization requests
+carry neither `tools` nor `stream`, which is why compaction used to fail. Everything else the
+failing requests differed in — size, system prompt, message count, `max_completion_tokens`,
+`reasoning_effort`, `stream_options`, header order, User-Agent version, HTTP/1.1 vs HTTP/2 —
+makes no difference.
+
+The extension cannot patch that body: `before_provider_request` never fires for summarization
+calls (`before_provider_headers` does). Hence a summarization of its own, with the shape the
+gate requires.
+
 Reference: [anomalyco/opencode `session/llm/request.ts`](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/llm/request.ts).
 
 ## Development
@@ -124,7 +128,9 @@ node --test        # Node 22+ runs the TypeScript tests directly
 ```
 
 The tests cover the EID shape, the per-request fingerprint guard (including "never touch
-another provider") and catalog mapping.
+another provider"), catalog mapping, and the compaction machinery: the gate-required request
+shape, the streaming parser, message serialization, file tracking and the prompts mirrored
+from Pi.
 
 ## License
 
