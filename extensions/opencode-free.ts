@@ -1069,7 +1069,9 @@ async function summarizeBranch(
 
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	const summary = BRANCH_SUMMARY_PREAMBLE + text + formatFileOperations(readFiles, modifiedFiles);
-	return { summary: { summary, details: { readFiles, modifiedFiles }, usage: result.usage } };
+	// Pi reads `result.summary.summary` as the text, so this stays flat and the
+	// handler adds the single `summary` wrapper — the same shape as compaction.
+	return { summary, details: { readFiles, modifiedFiles }, usage: result.usage };
 }
 
 function summarizeFailure(error: unknown): string {
